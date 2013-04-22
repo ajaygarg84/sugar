@@ -819,3 +819,68 @@ def get_documents_path():
         if exception.errno != errno.ENOENT:
             logging.exception('Could not run xdg-user-dir')
     return None
+
+
+def _write_metadata_and_preview_files_and_return_file_paths(metadata,
+                                                            file_name):
+    metadata_copy = metadata.copy()
+    metadata_copy.pop('mountpoint', None)
+    metadata_copy.pop('uid', None)
+
+
+    # For journal case, there is the special treatment.
+    if metadata.get('mountpoint', '/') == '/':
+        if metadata.get('uid', ''):
+            object_id = _get_datastore().update(metadata['uid'],
+                                                dbus.Dictionary(metadata),
+                                                '',
+                                                False)
+        else:
+            object_id = _get_datastore().create(dbus.Dictionary(metadata),
+                                                '',
+                                                False)
+        return
+
+
+    metadata_dir_path = os.path.join(metadata['mountpoint'],
+                                     JOURNAL_METADATA_DIR)
+    if not os.path.exists(metadata_dir_path):
+        os.mkdir(metadata_dir_path)
+
+    preview = None
+    if 'preview' in metadata_copy:
+        preview = metadata_copy['preview']
+        preview_fname = file_name + '.preview'
+        metadata_copy.pop('preview', None)
+
+    try:
+        metadata_json = json.dumps(metadata_copy)
+    except (UnicodeDecodeError, EnvironmentError):
+        logging.error('Could not convert metadata to json.')
+    else:
+        (fh, fn) = tempfile.mkstemp(dir=metadata['mountpoint'])
+        os.write(fh, metadata_json)
+        os.close(fh)
+        os.rename(fn, os.path.join(metadata_dir_path, file_name + '.metadata'))
+
+        if preview:
+            (fh, fn) = tempfile.mkstemp(dir=metadata['mountpoint'])
+            os.write(fh, preview)
+            os.close(fh)
+            os.rename(fn, os.path.join(metadata_dir_path, preview_fname))
+
+    metadata_destination_path = os.path.join(metadata_dir_path, file_name + '.metadata')
+    make_file_fully_permissible(metadata_destination_path)
+    if preview:
+        preview_destination_path =  os.path.join(metadata_dir_path, preview_fname)
+        make_file_fully_permissible(preview_destination_path)
+    else:
+        preview_destination_path = None
+
+    return (metadata_destination_path, preview_destination_path)
+
+
+def update_only_metadata_and_preview_files_and_return_file_paths(metadata):
+    file_name = metadata['title']
+    _write_metadata_and_preview_files_and_return_file_paths(metadata,
+                                                            file_name)
